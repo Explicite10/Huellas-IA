@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Captura de Huellas</title>
+  <link rel="stylesheet" href="/static/styles.css?v=15">
+  <style>
+    .puente { max-width: 760px; margin: 24px auto; padding: 0 16px; }
+    .tarjeta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 24px; align-items: center; }
+    @media (max-width: 640px) { .tarjeta { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; } }
+    .qr { background: #fff; padding: 10px; border-radius: 12px; border: 1px solid var(--borde); line-height: 0; }
+    .qr img { width: 240px; height: 240px; display: block; }
+    .qr.usado img { opacity: .15; }
+    .pasos { margin: 10px 0 0; padding-left: 20px; color: var(--tenue); }
+    .pasos li { margin: 4px 0; }
+    .estado-puente { display: flex; align-items: center; gap: 10px; margin-top: 16px; font-weight: 600; }
+    .punto { width: 12px; height: 12px; border-radius: 50%; background: var(--tenue); flex: none; }
+    .punto.vivo { background: var(--medio); animation: latido 1.2s infinite; }
+    .punto.ok { background: var(--ok); }
+    .punto.mal { background: var(--mal); }
+    @keyframes latido { 50% { opacity: .35; } }
+    .alterno { margin-top: 18px; font-size: .9rem; color: var(--tenue); }
+    .alterno a { color: var(--acento); }
+    .expira { font-size: .8rem; color: var(--tenue); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+<header class="barra">
+  <div class="marca">
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M7 18c1.5-2 2-4 2-7a3 3 0 0 1 6 0c0 3-.5 6-2 9M5 15c.7-1.4 1-2.7 1-4a6 6 0 0 1 12 0c0 2.5-.3 4.6-1 6.5M12 11c0 3.5-1 6.5-3 9M3.5 11a8.5 8.5 0 0 1 17 0"/></svg>
+    <div>
+      <h1>Captura de huellas</h1>
+      <p id="proyecto">&nbsp;</p>
+    </div>
+  </div>
+</header>
+
+<main class="puente">
+  <section class="panel">
+    <div class="tarjeta">
+      <div class="qr" id="qr"><img id="imgQr" alt="Código QR para abrir la captura en el celular"></div>
+      <div>
+        <h2>Continúa en tu celular</h2>
+        <ol class="pasos">
+          <li>Abre la cámara de tu celular y escanea el código.</li>
+          <li>Permite el acceso a la cámara y coloca tus 4 dedos.</li>
+          <li>Al terminar, esta pantalla continuará sola.</li>
+        </ol>
+        <div class="estado-puente"><span class="punto vivo" id="punto"></span><span id="estado">Esperando que escanees el código…</span></div>
+        <div class="expira" id="expira"></div>
+      </div>
+    </div>
+    <p class="alterno">¿Tu computadora tiene una buena cámara? <a id="enlaceLocal" href="#">Capturar aquí mismo</a></p>
+  </section>
+</main>
+
+<script>
+(() => {
+  const token = location.pathname.split("/").pop();
+  const $ = (id) => document.getElementById(id);
+  const urlCaptura = `/captura/${token}`;
+
+  // En celular no tiene sentido un QR: se abre la captura directamente.
+  const esCelular = matchMedia("(pointer: coarse)").matches && Math.min(screen.width, screen.height) < 820;
+  if (esCelular) { location.replace(urlCaptura); return; }
+
+  $("enlaceLocal").href = urlCaptura;
+  $("imgQr").src = `/api/v1/captura/${token}/qr.svg`;
+  let terminado = false;
+
+  function pintar(texto, clase) {
+    $("estado").textContent = texto;
+    $("punto").className = "punto " + clase;
+  }
+
+  function terminar(s) {
+    terminado = true;
+    $("qr").classList.add("usado");
+    $("expira").textContent = "";
+    const ok = s.estado === "completada" && s.aprobada;
+    const textos = { completada: ok ? "¡Huellas capturadas! Continuando…" : "Captura registrada. Continuando…",
+                     expirada: "El código expiró.", cancelada: "La captura fue cancelada." };
+    pintar(textos[s.estado] || "Sesión finalizada.", ok ? "ok" : s.estado === "completada" ? "vivo" : "mal");
+    if (window.parent !== window) {
+      window.parent.postMessage({ tipo: "huellas:finalizada", sesion_id: s.sesion_id, estado: s.estado, aprobada: !!s.aprobada },
+                                s.origen_retorno || "*");
+    } else if (s.redireccion) {
+      setTimeout(() => { location.href = s.redireccion; }, 1500);
+    }
+  }
+
+  function cuentaRegresiva(expira) {
+    const restante = Math.max(0, Math.round((new Date(expira) - Date.now()) / 1000));
+    $("expira").textContent = `El código vence en ${Math.floor(restante / 60)}:${String(restante % 60).padStart(2, "0")}`;
+  }
+
+  async function consultar() {
+    if (terminado) return;
+    try {
+      const r = await fetch(`/api/v1/captura/${token}`, { cache: "no-store" });
+      const s = await r.json();
+      if (!r.ok) { pintar(s.detail || "Enlace inválido", "mal"); $("qr").classList.add("usado"); return; }
+      $("proyecto").textContent = s.proyecto;
+      if (["completada", "expirada", "cancelada"].includes(s.estado)) return terminar(s);
+      cuentaRegresiva(s.expira);
+      if (s.estado === "entregando") pintar("Enviando tus huellas al trámite…", "vivo");
+      else if (s.estado === "error_entrega") pintar("El trámite no confirmó la recepción. Reintenta el envío desde el celular.", "mal");
+      else if (s.intentos > 0) pintar(`Capturando en tu celular… intento ${s.intentos} de ${s.max_intentos}`, "vivo");
+      else if (s.celular_conectado) pintar("Celular conectado. Coloca tus dedos frente a la cámara…", "vivo");
+    } catch {
+      pintar("Sin conexión con el servicio, reintentando…", "mal");
+    }
+    setTimeout(consultar, 2000);
+  }
+  consultar();
+})();
+</script>
+</body>
+</html>

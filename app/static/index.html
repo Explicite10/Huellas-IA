@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Captura de Huellas</title>
+  <link rel="stylesheet" href="/static/styles.css?v=15">
+</head>
+<body>
+<header class="barra">
+  <div class="marca">
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M7 18c1.5-2 2-4 2-7a3 3 0 0 1 6 0c0 3-.5 6-2 9M5 15c.7-1.4 1-2.7 1-4a6 6 0 0 1 12 0c0 2.5-.3 4.6-1 6.5M12 11c0 3.5-1 6.5-3 9M3.5 11a8.5 8.5 0 0 1 17 0"/></svg>
+    <div>
+      <h1>Captura de huellas sin contacto</h1>
+      <p id="subtitulo">4 dedos · índice a meñique · evaluación en tiempo real</p>
+    </div>
+  </div>
+  <a class="enlace" href="/docs" target="_blank" rel="noopener">API /docs</a>
+</header>
+
+<main class="layout">
+  <section class="panel camara-panel">
+    <div class="visor-wrap">
+      <div class="visor" id="visor">
+        <video id="video" playsinline muted autoplay></video>
+        <canvas id="overlay"></canvas>
+        <div class="estado-auto" id="estadoAuto" hidden></div>
+        <div class="mensaje" id="mensaje">Iniciando cámara…</div>
+        <div class="progreso" id="progreso" hidden>
+          <svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="19" class="pista"/><circle cx="22" cy="22" r="19" class="avance" id="avance"/></svg>
+        </div>
+        <div class="flash" id="flash"></div>
+      </div>
+    </div>
+
+    <div class="yemas" id="yemas" aria-label="Vista previa de contraste de cada yema">
+      <figure><canvas width="96" height="128"></canvas><figcaption>Índice <b>–</b></figcaption></figure>
+      <figure><canvas width="96" height="128"></canvas><figcaption>Medio <b>–</b></figcaption></figure>
+      <figure><canvas width="96" height="128"></canvas><figcaption>Anular <b>–</b></figcaption></figure>
+      <figure><canvas width="96" height="128"></canvas><figcaption>Meñique <b>–</b></figcaption></figure>
+    </div>
+
+    <div class="controles">
+      <button id="btnCapturar" class="primario solo-demo">Capturar ahora</button>
+      <button id="btnFinalizar" class="secundario" hidden>Usar la mejor captura</button>
+      <label class="boton secundario solo-demo">Subir foto<input type="file" id="archivo" accept="image/*" hidden></label>
+      <button id="btnLinterna" class="secundario" hidden>Linterna</button>
+      <button id="btnReiniciar" class="secundario" hidden>Nueva captura</button>
+    </div>
+
+    <div class="ajustes">
+      <label>Cámara <select id="selCamara"></select></label>
+      <label>Resolución
+        <select id="selResolucion">
+          <option value="auto" selected>Automática</option>
+          <option value="3840x2160">Máxima (4K)</option>
+          <option value="1920x1080">1080p</option>
+          <option value="1280x720">720p</option>
+        </select>
+      </label>
+      <label>Mano
+        <select id="selMano">
+          <option value="auto">Automática</option>
+          <option value="derecha">Derecha</option>
+          <option value="izquierda">Izquierda</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="chkAuto" checked> Captura automática</label>
+      <label class="check solo-demo"><input type="checkbox" id="chkReintentar" checked> Reintentar hasta lograr calidad</label>
+      <label id="lblZoom" hidden>Zoom <input type="range" id="rngZoom"></label>
+      <details class="solo-demo">
+        <summary>Avanzado</summary>
+        <label>Ancho mínimo de dedo (px) <input type="range" id="rngAncho" min="80" max="320" value="150"><output id="outAncho">150</output></label>
+        <label>Umbral de enfoque <input type="range" id="rngEnfoque" min="0.5" max="12" step="0.1" value="2.5"><output id="outEnfoque">2.5</output></label>
+        <label>Calidad objetivo <input type="range" id="rngCalidad" min="30" max="90" value="65"><output id="outCalidad">65</output></label>
+        <label id="lblFoco" hidden>Enfoque manual <input type="range" id="rngFoco"></label>
+        <label class="check"><input type="checkbox" id="chkFoto"> Usar foto de máxima resolución (ImageCapture)</label>
+      </details>
+    </div>
+
+    <ul class="checklist" id="checklist">
+      <li data-k="mano">Mano detectada</li>
+      <li data-k="palma">Palma hacia la cámara</li>
+      <li data-k="dedos">4 dedos extendidos</li>
+      <li data-k="encuadre">Dedos dentro del encuadre</li>
+      <li data-k="distancia">Distancia adecuada <small id="detDistancia"></small></li>
+      <li data-k="separacion">Dedos ligeramente separados</li>
+      <li data-k="luz">Iluminación <small id="detLuz"></small></li>
+      <li data-k="quieto">Mano estable</li>
+      <li data-k="enfoque">Enfoque nítido <small id="detEnfoque"></small></li>
+    </ul>
+    <p class="telemetria" id="telemetria"></p>
+  </section>
+
+  <section class="panel resultado-panel">
+    <div class="encabezado-resultado">
+      <h2>Resultado</h2>
+      <span class="insignia" id="insignia" hidden></span>
+    </div>
+    <div id="vacio" class="vacio">
+      <p>Solo pon tu mano frente a la cámara con la <b>palma hacia ella</b> y los <b>4 dedos estirados</b> y ligeramente
+        separados, y muévela despacio (más cerca o más lejos) hasta que los <b>4 cuadros estén en verde</b>.
+        No hay que presionar nada: la cámara analiza sola y termina en cuanto logra una buena captura.</p>
+      <ul>
+        <li>En celular usa la cámara trasera y enciende la linterna.</li>
+        <li>Si la cámara no enfoca de cerca, aleja un poco la mano y usa el zoom.</li>
+        <li>Evita fondos del color de la piel y luz directa que genere reflejos.</li>
+      </ul>
+    </div>
+    <div id="resultado" hidden>
+      <div class="resumen" id="resumen"></div>
+      <ul class="advertencias" id="advertencias"></ul>
+      <img id="imgMano" class="img-mano" alt="Mano con regiones de cada dedo">
+      <div class="tabla-dedos" id="tablaDedos"></div>
+    </div>
+
+    <div class="json-caja solo-demo">
+      <div class="json-barra">
+        <h3>Respuesta JSON <small>POST /api/v1/huellas/captura</small></h3>
+        <div>
+          <label class="check"><input type="checkbox" id="chkBase64"> base64 completo</label>
+          <button id="btnCopiar" class="secundario chico" disabled>Copiar</button>
+          <button id="btnDescargar" class="secundario chico" disabled>Descargar</button>
+        </div>
+      </div>
+      <pre id="json"><code>// Aquí aparecerá la respuesta de la API después de capturar.</code></pre>
+    </div>
+  </section>
+</main>
+
+<div class="visor-grande" id="visorGrande" hidden><img alt=""><p></p></div>
+
+<script type="module" src="/static/app.js?v=16"></script>
+</body>
+</html>

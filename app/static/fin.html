@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Captura de Huellas</title>
+  <link rel="stylesheet" href="/static/styles.css?v=15">
+  <style>
+    body { min-height: 100svh; display: flex; flex-direction: column; }
+    .fin-vista { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+    .fin-caja { max-width: 420px; width: 100%; text-align: center; }
+    .icono { width: 112px; height: 112px; margin: 0 auto 20px; border-radius: 50%; display: grid; place-items: center;
+             background: var(--borde); color: #fff; }
+    .icono svg { width: 60px; height: 60px; }
+    .icono.ok { background: var(--ok); animation: aparecer .45s ease-out; }
+    .icono.medio { background: var(--medio); }
+    .icono.mal { background: var(--mal); }
+    .icono.ok path { stroke-dasharray: 40; stroke-dashoffset: 40; animation: trazo .45s .25s ease-out forwards; }
+    @keyframes aparecer { from { transform: scale(.6); opacity: 0; } }
+    @keyframes trazo { to { stroke-dashoffset: 0; } }
+    h2 { font-size: 1.5rem; margin-bottom: 8px; }
+    .sub { color: var(--tenue); margin: 0 0 16px; font-size: 1rem; }
+    .nota { margin-top: 22px; font-size: .85rem; color: var(--tenue); }
+    @media (prefers-reduced-motion: reduce) { .icono.ok, .icono.ok path { animation: none; stroke-dashoffset: 0; } }
+  </style>
+</head>
+<body>
+<header class="barra">
+  <div class="marca">
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M7 18c1.5-2 2-4 2-7a3 3 0 0 1 6 0c0 3-.5 6-2 9M5 15c.7-1.4 1-2.7 1-4a6 6 0 0 1 12 0c0 2.5-.3 4.6-1 6.5M12 11c0 3.5-1 6.5-3 9M3.5 11a8.5 8.5 0 0 1 17 0"/></svg>
+    <div>
+      <h1>Captura de huellas</h1>
+      <p id="proyecto">&nbsp;</p>
+    </div>
+  </div>
+</header>
+
+<main class="fin-vista">
+  <div class="fin-caja" role="status" aria-live="polite">
+    <div class="icono" id="icono"></div>
+    <h2 id="titulo">Un momento…</h2>
+    <p class="sub" id="sub"></p>
+    <button class="primario" id="btnReintentar" hidden>Reintentar envío</button>
+    <p class="nota" id="nota"></p>
+  </div>
+</main>
+
+<script>
+(async () => {
+  const token = location.pathname.split("/").pop();
+  const modoQr = new URLSearchParams(location.search).get("modo") === "qr";
+  const $ = (id) => document.getElementById(id);
+  const ICONOS = {
+    ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    medio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 6v8M12 18h.01"/></svg>',
+    mal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/></svg>',
+  };
+
+  // Evita que "atrás" regrese a la captura: se queda en esta vista.
+  history.pushState(null, "", location.href);
+  addEventListener("popstate", () => history.pushState(null, "", location.href));
+
+  async function consultar() {
+    const r = await fetch(`/api/v1/captura/${token}`, { cache: "no-store" });
+    const datos = await r.json();
+    if (!r.ok) throw new Error(datos.detail || "Enlace inválido");
+    return datos;
+  }
+
+  let s;
+  try {
+    s = await consultar();
+  } catch (e) {
+    pintar("mal", "Enlace inválido", e.message);
+    return;
+  }
+  $("proyecto").textContent = s.proyecto;
+
+  // Si alguien abre esta vista antes de terminar, vuelve a la captura.
+  if (s.estado === "pendiente") { location.replace(`/captura/${token}${location.search}`); return; }
+
+  // Mientras el servicio entrega al trámite, se espera la confirmación.
+  while (s.estado === "entregando") {
+    pintar("medio", "Enviando tus huellas…", "Esperando la confirmación del trámite.");
+    await new Promise((r) => setTimeout(r, 1500));
+    s = await consultar();
+  }
+
+  if (s.estado === "error_entrega") {
+    // El trámite no confirmó: nada quedó guardado. Las huellas siguen en memoria hasta que venza el enlace.
+    pintar("mal", "No se pudo registrar", "El trámite no confirmó la recepción de tus huellas. Inténtalo de nuevo.");
+    const boton = $("btnReintentar");
+    boton.hidden = false;
+    boton.onclick = async () => {
+      boton.disabled = true;
+      boton.textContent = "Enviando…";
+      const r = await fetch(`/api/v1/captura/${token}/finalizar`, { method: "POST" });
+      if (r.ok || r.status === 409) { location.reload(); return; }
+      boton.disabled = false;
+      boton.textContent = "Reintentar envío";
+      $("nota").textContent = (await r.json().catch(() => ({}))).detail || "Sigue sin responder el trámite.";
+    };
+    return;
+  }
+
+  const aprobada = s.estado === "completada" && s.aprobada;
+  if (aprobada) {
+    pintar("ok", "¡Huellas registradas!", "Tus 4 huellas se capturaron con buena calidad.");
+  } else if (s.estado === "completada") {
+    pintar("medio", "Captura registrada", "La calidad no alcanzó el mínimo requerido. El trámite te indicará si debes repetirla.");
+  } else if (s.estado === "expirada") {
+    pintar("mal", "El enlace expiró", "Vuelve a iniciar el registro desde el trámite.");
+  } else {
+    pintar("mal", "Captura cancelada", "Vuelve a iniciar el registro desde el trámite.");
+  }
+
+  const aviso = { tipo: "huellas:finalizada", sesion_id: s.sesion_id, estado: s.estado, aprobada: !!s.aprobada };
+  if (modoQr) {
+    $("nota").textContent = "Listo. Regresa a tu computadora para continuar; ya puedes cerrar esta pestaña.";
+  } else if (window.parent !== window) {
+    window.parent.postMessage(aviso, s.origen_retorno || "*");
+  } else if (s.redireccion) {
+    $("nota").textContent = "Regresando al trámite…";
+    setTimeout(() => location.replace(s.redireccion), 2500);
+  } else {
+    $("nota").textContent = "Ya puedes cerrar esta pestaña.";
+  }
+
+  function pintar(tipo, titulo, sub) {
+    $("icono").className = "icono " + tipo;
+    $("icono").innerHTML = ICONOS[tipo];
+    $("titulo").textContent = titulo;
+    $("sub").textContent = sub;
+  }
+})();
+</script>
+</body>
+</html>
